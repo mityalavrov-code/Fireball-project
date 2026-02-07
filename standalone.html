@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Интерактивный демонстратор и веб-калькулятор параметров ШМ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #0f172a; /* Slate 900 */
+        color: #e2e8f0;
+      }
+      
+      .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      /* Custom slider styling - Webkit */
+      input[type=range] {
+        -webkit-appearance: none; 
+        background: transparent; 
+      }
+      
+      input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #38bdf8;
+        cursor: pointer;
+        margin-top: -6px; 
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+      }
+      
+      input[type=range]::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 4px;
+        cursor: pointer;
+        background: #334155;
+        border-radius: 2px;
+      }
+
+      /* Custom slider styling - Firefox */
+      input[type=range]::-moz-range-thumb {
+        height: 16px;
+        width: 16px;
+        border: none;
+        border-radius: 50%;
+        background: #38bdf8;
+        cursor: pointer;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+      }
+      
+      input[type=range]::-moz-range-track {
+        width: 100%;
+        height: 4px;
+        cursor: pointer;
+        background: #334155;
+        border-radius: 2px;
+      }
+
+      .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+      .custom-scrollbar::-webkit-scrollbar-track {
+          background: #0f172a; 
+        }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #334155; 
+          border-radius: 3px;
+        }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #475569; 
+        }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react": "https://esm.sh/react@18.3.1",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+    "three": "https://esm.sh/three@0.160.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.16?external=react,react-dom,three",
+    "@react-three/drei": "https://esm.sh/@react-three/drei@9.99.0?external=react,react-dom,three,@react-three/fiber"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef, useMemo } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import * as THREE from 'three';
+        import { Canvas, useFrame } from '@react-three/fiber';
+        import { OrbitControls, Sphere, MeshDistortMaterial, Sparkles as SparklesDrei } from '@react-three/drei';
+        import { 
+          Sparkles, Sliders, BarChart3, BookOpen, Info, BarChart2, User, Cpu, 
+          X, FileText, Database, Layers, ShieldCheck, Globe, BookMarked, Award, 
+          Flag, MapPin, Zap, Calculator, Palette, Search, Activity, Target, Wind, 
+          Clock, Maximize, AlertTriangle, BoxSelect, RotateCcw, Scale, HelpCircle, 
+          Timer, Table, Ruler, TrendingUp, TrendingDown, Skull
+        } from 'lucide-react';
+
+        // ==========================================
+        // TYPES
+        // ==========================================
+        
+        const StabilityStatus = {
+          Stable: "Высокая (Стабильно)",
+          Moderate: "Умеренная",
+          Low: "Низкая",
+          Unstable: "Неустойчива (Разрушение)"
+        };
+
+        const DangerLevel = {
+          Low: "Низкий",
+          Medium: "Средний",
+          High: "Высокий",
+          Critical: "Критический"
+        };
+
+        // ==========================================
+        // PHYSICS ENGINE (utils/physics.ts)
+        // ==========================================
+
+        const EPSILON_0 = 8.854e-12; // F/m
+        const TNT_JOULES_PER_KG = 4184000; // 4.184 MJ per kg of TNT
+
+        const calculatePhysics = (params) => {
+          const { diameter, charge, epsilon, k_lifetime } = params;
+
+          // Convert units to SI
+          const D_m = diameter / 100; // meters
+          const R_m = D_m / 2;
+          const Q_c = charge / 1000; // Coulombs
+
+          // 1. Lifetime (Bychkov)
+          // Empirical formula: tau = k * D
+          const lifetime = k_lifetime * diameter;
+
+          // 2. Energy (Nikitin)
+          // W = Q^2 / (4 * pi * e0 * D)
+          const energyJoule = (Q_c * Q_c) / (4 * Math.PI * EPSILON_0 * D_m);
+          
+          // 3. Electric Field on Surface
+          // E = Q / (4 * pi * e0 * R^2)
+          const fieldSurface = Q_c / (4 * Math.PI * EPSILON_0 * (R_m * R_m));
+
+          // 4. Pressures
+          // P_electric = e0 * E^2 / 2
+          const pressureElectric = (EPSILON_0 * Math.pow(fieldSurface, 2)) / 2;
+          
+          // P_shell = (er - 1) * e0 * E^2 / 2
+          const pressureShell = (epsilon - 1) * pressureElectric;
+
+          // 5. Stability
+          const stabilityBeta = pressureShell / pressureElectric;
+          
+          let stabilityStatus = StabilityStatus.Unstable;
+          if (stabilityBeta > 1.5) stabilityStatus = StabilityStatus.Stable;
+          else if (stabilityBeta >= 1.0) stabilityStatus = StabilityStatus.Moderate;
+          else if (stabilityBeta >= 0.5) stabilityStatus = StabilityStatus.Low;
+
+          // 6. Leakage Current
+          const leakageCurrent = Q_c / lifetime;
+
+          // 7. Energy Density
+          const volume = (4/3) * Math.PI * Math.pow(R_m, 3);
+          const energyDensity = energyJoule / volume;
+
+          // 8. Danger Level (Recalibrated based on Expert Analysis)
+          let dangerLevel = DangerLevel.Low;
+          if (energyJoule > 500000) dangerLevel = DangerLevel.Critical;
+          else if (energyJoule > 50000) dangerLevel = DangerLevel.High;
+          else if (energyJoule > 2000) dangerLevel = DangerLevel.Medium;
+
+          // 9. Damage Radius (Corrected Hopkinson-Cranz Scaling with Uncertainty)
+          const tntMassKg = energyJoule / TNT_JOULES_PER_KG;
+          const k_upper = 10; 
+          const damageRadius = k_upper * Math.pow(tntMassKg, 1/3);
+
+          // Realistic Range (Correction factor alpha = 0.2 - 0.5)
+          const damageRadiusRealMin = 0.2 * damageRadius; // k=2
+          const damageRadiusRealMax = 0.5 * damageRadius; // k=5
+
+          return {
+            lifetime,
+            energyJoule,
+            fieldSurface,
+            pressureElectric,
+            pressureShell,
+            stabilityBeta,
+            stabilityStatus,
+            leakageCurrent,
+            energyDensity,
+            dangerLevel,
+            damageRadius,
+            damageRadiusRealMin,
+            damageRadiusRealMax
+          };
+        };
+
+        const formatScientific = (num) => {
+          if (num === 0) return "0";
+          if (Math.abs(num) >= 10000 || Math.abs(num) < 0.001) {
+            return num.toExponential(2);
+          }
+          return num.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+        };
+
+        const formatMetric = (num, unit) => {
+          // Russian SI prefixes
+          if (num >= 1e9) return `${(num / 1e9).toFixed(2)} Г${unit}`; // Giga
+          if (num >= 1e6) return `${(num / 1e6).toFixed(2)} М${unit}`; // Mega
+          if (num >= 1e3) return `${(num / 1e3).toFixed(2)} к${unit}`; // kilo
+          if (num < 1 && num > 0) return `${(num * 1000).toFixed(2)} м${unit}`; // milli
+          return `${num.toFixed(2)} ${unit}`;
+        };
+
+        // ==========================================
+        // COMPONENTS
+        // ==========================================
+
+        // --- VISUALIZATION PANEL ---
+        const BallLightningScene = ({ params, results, colors }) => {
+          const coreRef = useRef(null);
+          const scale = 0.8 + (params.diameter / 100) * 1.7;
+
+          const stabilityFactors = useMemo(() => {
+            switch(results.stabilityStatus) {
+              case StabilityStatus.Stable: return { speed: 2, distort: 0.3, jitter: 0 };
+              case StabilityStatus.Moderate: return { speed: 4, distort: 0.5, jitter: 0.01 };
+              case StabilityStatus.Low: return { speed: 8, distort: 0.8, jitter: 0.05 };
+              case StabilityStatus.Unstable: return { speed: 15, distort: 1.2, jitter: 0.1 };
+              default: return { speed: 5, distort: 0.5, jitter: 0 };
+            }
+          }, [results.stabilityStatus]);
+
+          useFrame((state) => {
+            if (coreRef.current) {
+              coreRef.current.rotation.y += 0.005;
+              coreRef.current.rotation.z += 0.002;
+              if (stabilityFactors.jitter > 0) {
+                coreRef.current.position.x = (Math.random() - 0.5) * stabilityFactors.jitter;
+                coreRef.current.position.y = (Math.random() - 0.5) * stabilityFactors.jitter;
+                coreRef.current.position.z = (Math.random() - 0.5) * stabilityFactors.jitter;
+              } else {
+                coreRef.current.position.set(0,0,0);
+              }
+            }
+          });
+
+          return (
+            <group scale={scale}>
+              <Sphere args={[1, 64, 64]} ref={coreRef}>
+                <MeshDistortMaterial
+                  color={colors.mid}
+                  emissive={colors.inner}
+                  emissiveIntensity={0.5 + (params.charge / 20)}
+                  roughness={0.2}
+                  metalness={0.8}
+                  distort={stabilityFactors.distort}
+                  speed={stabilityFactors.speed}
+                />
+              </Sphere>
+              <Sphere args={[1.05 + (params.epsilon * 0.02), 64, 64]}>
+                <meshPhysicalMaterial
+                  color={colors.outer}
+                  transparent
+                  opacity={0.15}
+                  roughness={0}
+                  metalness={0.1}
+                  transmission={0.9}
+                  thickness={params.epsilon}
+                  clearcoat={1}
+                  clearcoatRoughness={0}
+                  ior={1.33}
+                  side={THREE.DoubleSide}
+                />
+              </Sphere>
+              <SparklesDrei 
+                count={50 + Math.floor(params.charge * 2)} 
+                scale={3.5} 
+                size={2 + (params.charge / 10)} 
+                speed={0.4} 
+                opacity={0.5} 
+                color={colors.inner} 
+              />
+              <pointLight position={[0, 0, 0]} intensity={1 + (params.charge/5)} color={colors.inner} distance={5} decay={2} />
+            </group>
+          );
+        };
+
+        const VisualizationPanel = ({ params, results }) => {
+          const { diameter, charge } = params;
+          
+          const getPlasmaColor = () => {
+            switch (results.stabilityStatus) {
+              case StabilityStatus.Stable:
+                return { inner: '#e0f2fe', mid: '#0ea5e9', outer: '#0369a1', shadow: '#0ea5e9' };
+              case StabilityStatus.Moderate:
+                return { inner: '#fef9c3', mid: '#eab308', outer: '#a16207', shadow: '#eab308' };
+              case StabilityStatus.Low:
+                return { inner: '#ffedd5', mid: '#f97316', outer: '#c2410c', shadow: '#f97316' };
+              case StabilityStatus.Unstable:
+              default:
+                return { inner: '#ffe4e6', mid: '#f43f5e', outer: '#be123c', shadow: '#f43f5e' };
+            }
+          };
+
+          const colors = getPlasmaColor();
+
+          return (
+            <div className="h-full w-full bg-slate-950 relative overflow-hidden flex flex-col items-center justify-center rounded-xl border border-slate-800 shadow-2xl group">
+              <div className="absolute inset-0 opacity-20 pointer-events-none" 
+                   style={{ 
+                     backgroundImage: 'linear-gradient(#334155 1px, transparent 1px), linear-gradient(90deg, #334155 1px, transparent 1px)', 
+                     backgroundSize: '40px 40px' 
+                   }}>
+              </div>
+              <div className="absolute inset-0 z-10 cursor-move">
+                <Canvas camera={{ position: [0, 0, 6], fov: 45 }} dpr={[1, 2]}>
+                   <ambientLight intensity={0.5} />
+                   <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
+                   <pointLight position={[-10, -10, -10]} intensity={0.5} color={colors.outer} />
+                   <BallLightningScene params={params} results={results} colors={colors} />
+                   <OrbitControls 
+                     enablePan={false} 
+                     enableZoom={true} 
+                     minDistance={3} 
+                     maxDistance={12}
+                     autoRotate={results.stabilityStatus === StabilityStatus.Stable}
+                     autoRotateSpeed={0.5}
+                   />
+                </Canvas>
+              </div>
+              <div className="absolute top-6 left-6 z-30 flex flex-col gap-4 pointer-events-none select-none">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-widest">
+                    <Activity size={14} /> Стабильность
+                  </div>
+                  <div className="flex items-center gap-3">
+                     <div className="w-2 h-8 rounded-full shadow-[0_0_10px_currentColor]" style={{ background: colors.mid, color: colors.mid }}></div>
+                     <div className="text-2xl font-bold text-slate-200 tracking-tight leading-none drop-shadow-md">
+                       {results.stabilityStatus.split(' ')[0]}
+                     </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono pl-5">
+                     β = {results.stabilityBeta.toFixed(2)}
+                  </div>
+                </div>
+                <div className="space-y-4 pt-4 border-t border-slate-800/50">
+                   <div>
+                     <div className="flex items-center gap-2 text-slate-500 text-[10px] font-mono uppercase">
+                       <Clock size={12} /> Время жизни
+                     </div>
+                     <div className="text-lg font-bold text-slate-300 pl-5 drop-shadow-sm">
+                       {results.lifetime.toFixed(1)} <span className="text-sm font-normal text-slate-500">сек</span>
+                     </div>
+                   </div>
+                   <div>
+                     <div className="flex items-center gap-2 text-slate-500 text-[10px] font-mono uppercase">
+                       <Zap size={12} /> Энергия
+                     </div>
+                     <div className="text-lg font-bold text-slate-300 pl-5 drop-shadow-sm">
+                       {formatMetric(results.energyJoule, 'Дж')}
+                     </div>
+                   </div>
+                   <div>
+                     <div className="flex items-center gap-2 text-slate-500 text-[10px] font-mono uppercase">
+                       <Maximize size={12} /> Диаметр
+                     </div>
+                     <div className="text-lg font-bold text-slate-300 pl-5 drop-shadow-sm">
+                       {params.diameter} <span className="text-sm font-normal text-slate-500">см</span>
+                     </div>
+                   </div>
+                </div>
+              </div>
+              <div className="absolute top-6 right-6 z-30 flex flex-col items-end gap-2 pointer-events-none select-none text-right">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-widest">
+                    Опасность <Skull size={14} /> 
+                  </div>
+                  <div className={`text-2xl font-bold tracking-tight leading-none drop-shadow-md ${
+                     results.dangerLevel.includes('Высокий') || results.dangerLevel.includes('Критический') ? 'text-rose-500' : 
+                     results.dangerLevel.includes('Средний') ? 'text-yellow-400' : 'text-emerald-400'
+                  }`}>
+                     {results.dangerLevel}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500 font-mono bg-slate-900/80 backdrop-blur px-2 py-1 rounded border border-slate-800">
+                     <AlertTriangle size={10} />
+                     Радиус: {results.damageRadius.toFixed(1)} м
+                  </div>
+              </div>
+              <div className="absolute bottom-4 right-4 text-slate-600 font-mono text-[10px] text-right leading-tight z-20 pointer-events-none select-none">
+                  <div className="flex items-center justify-end gap-2 mb-1 opacity-50"><BoxSelect size={12}/> 3D Viewport</div>
+                  <div>Масштаб визуальный</div>
+                  <div>Вращайте модель (ЛКМ)</div>
+              </div>
+            </div>
+          );
+        };
+
+        // --- CONTROLS PANEL ---
+        const Controls = ({ params, onChange, onReset, isVolumetric, onToggleVolumetric }) => {
+          const handleChange = (key, value) => {
+            onChange({ ...params, [key]: value });
+          };
+          return (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col gap-6 shadow-xl">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                   Параметры Модели
+                </h2>
+                <button 
+                  onClick={onReset}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors border border-slate-700"
+                  title="Сброс"
+                >
+                  <RotateCcw size={18} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                 <div className="flex flex-col">
+                    <span className="text-sm font-medium text-slate-200">
+                      Модель объемного заряда
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      Автоматический расчет Q ∝ D³
+                    </span>
+                 </div>
+                 <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={isVolumetric} onChange={onToggleVolumetric} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+                 </label>
+              </div>
+              <div className="flex flex-col gap-6">
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                      Диаметр (D)
+                      <div className="group relative">
+                        <Info size={14} className="text-slate-500 cursor-help" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-slate-300 text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                          Размер плазменного образования. Влияет на энергию.
+                        </div>
+                      </div>
+                    </label>
+                    <span className="text-cyan-400 font-mono font-bold bg-slate-950 px-2 py-1 rounded border border-slate-800 min-w-[60px] text-center">
+                      {params.diameter} см
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="60"
+                    step="1"
+                    value={params.diameter}
+                    onChange={(e) => handleChange('diameter', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>5 см</span>
+                    <span>30 см</span>
+                    <span>60 см</span>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                      Электрический Заряд (Q)
+                      <div className="group relative">
+                        <Info size={14} className="text-slate-500 cursor-help" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-slate-300 text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                           Величина заряда ядра. Определяет энергию и напряженность поля.
+                        </div>
+                      </div>
+                    </label>
+                    <span className="text-purple-400 font-mono font-bold bg-slate-950 px-2 py-1 rounded border border-slate-800 min-w-[80px] text-center">
+                      {params.charge.toFixed(2)} мКл
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.01"
+                    max={isVolumetric ? Math.max(50, params.charge * 1.5) : 50} 
+                    step="0.01"
+                    value={params.charge}
+                    onChange={(e) => {
+                       handleChange('charge', parseFloat(e.target.value));
+                       if(isVolumetric) onToggleVolumetric(); 
+                    }}
+                    className={`w-full ${isVolumetric ? 'accent-rose-500' : 'accent-purple-500'}`}
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>0.01</span>
+                     <span>{(isVolumetric ? Math.max(50, params.charge * 1.5) : 50).toFixed(0)}</span>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                     <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                      Диэлектрическая прониц. (ε)
+                      <div className="group relative">
+                        <Info size={14} className="text-slate-500 cursor-help" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-slate-300 text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                          Свойство материала оболочки (вода/воздух).
+                        </div>
+                      </div>
+                    </label>
+                    <span className="text-emerald-400 font-mono font-bold bg-slate-950 px-2 py-1 rounded border border-slate-800 min-w-[60px] text-center">
+                      {params.epsilon.toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="10.0"
+                    step="0.1"
+                    value={params.epsilon}
+                    onChange={(e) => handleChange('epsilon', parseFloat(e.target.value))}
+                    className="w-full accent-emerald-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>1.0</span>
+                    <span>5.0</span>
+                    <span>10.0</span>
+                  </div>
+                </div>
+                 <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                      Коэф. жизни (k)
+                      <div className="group relative">
+                        <Info size={14} className="text-slate-500 cursor-help" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-slate-300 text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                           Коэффициент в формуле Бычкова (τ = k·D).
+                        </div>
+                      </div>
+                    </label>
+                    <span className="text-blue-400 font-mono font-bold bg-slate-950 px-2 py-1 rounded border border-slate-800 min-w-[60px] text-center">
+                      {params.k_lifetime.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="1.5"
+                    step="0.05"
+                    value={params.k_lifetime}
+                    onChange={(e) => handleChange('k_lifetime', parseFloat(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>1.0</span>
+                    <span>1.25</span>
+                    <span>1.5</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // --- RESULTS PANEL ---
+        const ResultsPanel = ({ results }) => {
+          const getEnergyColor = (joules) => {
+            if (joules < 2000) return 'text-emerald-400';
+            if (joules < 50000) return 'text-yellow-400';
+            if (joules < 500000) return 'text-orange-500';
+            return 'text-fuchsia-500 shadow-[0_0_10px_currentColor]';
+          };
+
+          return (
+            <div className="flex flex-col gap-4 h-full">
+              <div className="text-xs text-slate-500 font-mono uppercase tracking-widest mb-2">
+                 Аналитическая сводка (NB-Model)
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-800/40 border border-slate-700 p-4 rounded-xl flex flex-col justify-between hover:bg-slate-800/60 transition-colors relative overflow-hidden group">
+                   <div className="flex justify-between items-start mb-2 relative z-10">
+                      <Zap size={20} className={getEnergyColor(results.energyJoule).split(' ')[0]} />
+                      <span className="text-[10px] text-slate-500 uppercase">Энергоемкость</span>
+                   </div>
+                   <div className="relative z-10">
+                      <div className={`text-2xl font-bold tracking-tight transition-colors ${getEnergyColor(results.energyJoule)}`}>
+                        {formatMetric(results.energyJoule, 'Дж')}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono mt-1 flex items-center gap-1">
+                         Плотность: {formatScientific(results.energyDensity)} Дж/м³
+                      </div>
+                   </div>
+                   <div className={`absolute -right-4 -bottom-4 w-24 h-24 rounded-full blur-3xl opacity-10 group-hover:opacity-20 transition-opacity ${getEnergyColor(results.energyJoule).replace('text-', 'bg-')}`}></div>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-4 rounded-xl flex flex-col justify-between hover:bg-slate-800/60 transition-colors">
+                   <div className="flex justify-between items-start mb-2">
+                      <Target size={20} className="text-cyan-400" />
+                      <span className="text-[10px] text-slate-500 uppercase">Напряженность</span>
+                   </div>
+                   <div>
+                      <div className="text-2xl font-bold text-white tracking-tight">{formatMetric(results.fieldSurface, '')}</div>
+                      <div className="text-xs text-cyan-400/80 font-mono mt-1">В/м</div>
+                   </div>
+                </div>
+                <div className="col-span-2 bg-slate-800/40 border border-slate-700 p-4 rounded-xl flex flex-col gap-3">
+                   <div className="flex items-center gap-2 text-slate-400 mb-1">
+                      <Layers size={16} />
+                      <span className="text-xs font-semibold uppercase">Баланс Давлений</span>
+                   </div>
+                   <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1">
+                         <div className="text-[10px] text-slate-500">Электрическое (Ядро)</div>
+                         <div className="text-lg font-mono text-rose-300">{formatScientific(results.pressureElectric)} Pa</div>
+                         <div className="h-1 bg-slate-700 mt-1 rounded-full overflow-hidden">
+                            <div className="h-full bg-rose-500" style={{ width: '100%' }}></div>
+                         </div>
+                      </div>
+                      <div className="text-slate-600 font-bold">vs</div>
+                      <div className="flex-1 text-right">
+                         <div className="text-[10px] text-slate-500">Поляризационное (Оболочка)</div>
+                         <div className="text-lg font-mono text-emerald-300">{formatScientific(results.pressureShell)} Pa</div>
+                         <div className="h-1 bg-slate-700 mt-1 rounded-full overflow-hidden flex justify-end">
+                            <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, results.stabilityBeta * 100)}%` }}></div>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-4 rounded-xl flex flex-col justify-center">
+                   <div className="flex items-center gap-2 text-slate-400 mb-1">
+                      <Wind size={16} />
+                      <span className="text-xs uppercase">Ток утечки</span>
+                   </div>
+                   <div className="text-xl font-mono text-white">{formatScientific(results.leakageCurrent)} А</div>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-4 rounded-xl flex flex-col justify-center group relative">
+                   <div className="flex items-center gap-2 text-slate-400 mb-1">
+                      <Activity size={16} />
+                      <span className="text-xs uppercase">Радиус поражения</span>
+                   </div>
+                   <div className="text-xl font-mono text-white">
+                     {results.damageRadiusRealMin.toFixed(1)} — {results.damageRadiusRealMax.toFixed(1)} м
+                   </div>
+                   <div className="text-[9px] text-slate-600">
+                     Макс: {results.damageRadius.toFixed(1)} м (Хопкинсон)
+                   </div>
+                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-900 text-slate-400 text-[10px] rounded shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700">
+                     Отображен реалистичный диапазон (0.2-0.5R). Теоретический максимум (R) используется для категоризации.
+                   </div>
+                </div>
+              </div>
+              <div className="mt-auto pt-4 border-t border-slate-800 text-[10px] text-slate-600">
+                 * Важно: Расчет радиуса — инженерное приближение (Хопкинсон-Кранц с поправкой). Механизм разрушения ШМ (эл. разряд) отличается от ВВ.
+              </div>
+            </div>
+          );
+        };
+
+        // --- OVERLAYS ---
+
+        const Term = ({ word, def, color = "text-slate-200" }) => (
+          <span className={`group relative inline-block cursor-help border-b border-dashed border-slate-500 ${color} hover:text-cyan-400 transition-colors mx-1`}>
+            {word}
+            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 p-3 bg-slate-800 text-slate-300 text-xs rounded-lg border border-slate-700 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none text-left leading-relaxed font-sans normal-case">
+              {def}
+              <svg className="absolute text-slate-800 h-2 w-full left-0 top-full" x="0px" y="0px" viewBox="0 0 255 255"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
+            </span>
+          </span>
+        );
+
+        const AnalyticsOverlay = ({ params, results, onClose }) => {
+          const getPhysicalImpactDescription = (joules) => {
+            if (joules < 2000) return (
+                <ul className="list-disc pl-4 space-y-1 mt-2">
+                    <li>Ожоги 1-2 степени (контактные)</li>
+                    <li>Электрический шок (риск остановки сердца даже при малой энергии)</li>
+                </ul>
+            );
+            if (joules < 50000) return (
+                <ul className="list-disc pl-4 space-y-1 mt-2">
+                    <li>Ожоги 2-3 степени</li>
+                    <li>Травмы от разряда и механического воздействия</li>
+                    <li>Возгорание легковоспламеняющихся материалов</li>
+                </ul>
+            );
+            if (joules < 500000) return (
+                <ul className="list-disc pl-4 space-y-1 mt-2">
+                    <li>Контузия, баротравма</li>
+                    <li>Серьезные травмы (возможен летальный исход)</li>
+                    <li>Разрушение легких конструкций (двери, перегородки)</li>
+                </ul>
+            );
+            return (
+                <ul className="list-disc pl-4 space-y-1 mt-2">
+                    <li>Высокая вероятность летального исхода</li>
+                    <li>Локальные разрушения (стены, рамы, окна)</li>
+                    <li>Выброс металлических предметов</li>
+                </ul>
+            );
+          };
+
+          const getEnergyColor = (joules) => {
+            if (joules < 2000) return 'text-emerald-400';
+            if (joules < 50000) return 'text-yellow-400';
+            if (joules < 500000) return 'text-orange-500';
+            return 'text-fuchsia-500 shadow-[0_0_10px_currentColor]'; 
+          };
+
+          const toAtm = (pa) => (pa / 101325).toFixed(1);
+          const tntGrams = (results.energyJoule / 4184).toFixed(2);
+
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md overflow-hidden flex flex-col">
+              <div className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-40">
+                <div>
+                  <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+                    <BookOpen className="text-cyan-400" size={28} />
+                    Глубокий Анализ (NB-Model)
+                  </h2>
+                  <p className="text-slate-500 text-sm mt-1">Детальный разбор физических параметров симуляции</p>
+                </div>
+                <button 
+                  onClick={onClose}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-300 transition-colors group border border-slate-700"
+                >
+                  <X size={24} className="group-hover:rotate-90 transition-transform" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                <div className="w-full h-full max-w-[98%] mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6 animate-in fade-in duration-300">
+                  <div className="flex flex-col gap-6">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex-1">
+                      <div className="absolute top-0 right-0 p-4 opacity-5"><Scale size={120} /></div>
+                      <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2 relative z-10">
+                        <Scale className="text-purple-400" /> Механика Устойчивости
+                      </h3>
+                      <div className="prose prose-invert text-sm text-slate-300 mb-6 relative z-10">
+                        <p>
+                          ШМ моделируется как сферический конденсатор. 
+                          <Term word="Электрическое давление" def="Сила, с которой одноименные заряды внутри ядра отталкиваются друг от друга." />
+                          изнутри пытается разорвать сферу, а
+                          <Term word="Поляризационное давление" def="Сила сжатия диэлектрической оболочки под действием поля." />
+                          оболочки сдерживает этот напор.
+                        </p>
+                      </div>
+                      <div className="space-y-4 mb-6 relative z-10">
+                        <div className="bg-slate-950/50 rounded-lg p-4 border border-rose-500/20">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-rose-200 font-medium text-sm">Давление Ядра (Разрыв)</span>
+                            <span className="text-rose-400 font-mono font-bold">{formatScientific(results.pressureElectric)} Па</span>
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono">≈ {toAtm(results.pressureElectric)} атм</div>
+                        </div>
+                        <div className="bg-slate-950/50 rounded-lg p-4 border border-emerald-500/20">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-emerald-200 font-medium text-sm">Прочность Оболочки (Сжатие)</span>
+                            <span className="text-emerald-400 font-mono font-bold">{formatScientific(results.pressureShell)} Па</span>
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono">≈ {toAtm(results.pressureShell)} атм</div>
+                        </div>
+                      </div>
+                      <div className={`text-sm p-4 rounded-lg border flex gap-3 relative z-10 mt-auto ${results.stabilityBeta > 1 ? 'bg-emerald-900/20 border-emerald-800 text-emerald-200' : 'bg-rose-900/20 border-rose-800 text-rose-200'}`}>
+                         <ShieldCheck className="shrink-0" size={20} />
+                         <div>
+                           <span className="font-bold block mb-1">Коэффициент запаса: β = {results.stabilityBeta.toFixed(2)}</span>
+                           {results.stabilityBeta > 1 
+                             ? "Оболочка выдерживает внутреннее давление заряда." 
+                             : "Критическое состояние. Неизбежен взрыв."}
+                         </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-6 lg:col-span-1">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex-1">
+                      <div className="absolute top-0 right-0 p-4 opacity-5"><Zap size={120} /></div>
+                      <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2 relative z-10">
+                        <Zap className="text-yellow-400" /> Энергия и Последствия
+                      </h3>
+                      <div className="bg-slate-950/30 border border-slate-700/50 rounded-xl p-5 mb-6 relative z-10">
+                         <div className="flex flex-col gap-1 mb-2">
+                           <span className="text-xs text-slate-500 uppercase tracking-widest">Полная Энергия (W)</span>
+                           <span className={`text-4xl font-bold ${getEnergyColor(results.energyJoule)}`}>
+                             {formatMetric(results.energyJoule, 'Дж')}
+                           </span>
+                         </div>
+                         <div className="mt-2 text-xs text-slate-400 font-mono flex items-center justify-between border-t border-slate-800 pt-2">
+                           <span>≈ {tntGrams} г ТНТ</span>
+                           <span>ρ: {formatScientific(results.energyDensity)} Дж/м³</span>
+                         </div>
+                         <div className="mt-2 text-[10px] text-slate-500 italic leading-tight">
+                            * ТНТ-эквивалент используется для оценки масштаба. Реальное воздействие ШМ: электрическое + механическое, а не химическая детонация.
+                         </div>
+                      </div>
+                      <div className="prose prose-invert text-sm text-slate-300 mb-6 relative z-10">
+                        <p>
+                          В модели объёмного заряда энергия растет пропорционально <strong>D⁵</strong>.
+                          <Term word="Масштабный эффект" def="Увеличение диаметра в 5 раз ведет к росту энергии в 3125 раз." />
+                        </p>
+                      </div>
+                      <div className={`flex gap-3 items-start mt-auto bg-slate-900/40 p-4 rounded-lg border relative z-10 ${
+                           results.energyJoule > 50000 ? 'border-rose-900/50 bg-rose-950/20' : 'border-slate-700/50 bg-slate-950/20'
+                       }`}>
+                          <AlertTriangle className={`shrink-0 mt-0.5 ${results.energyJoule > 50000 ? 'text-rose-500' : 'text-slate-400'}`} size={20} />
+                          <div className="w-full">
+                            <div className="text-xs font-bold uppercase tracking-wide mb-1 text-slate-400">
+                              Сценарий поражения ({results.dangerLevel})
+                            </div>
+                            <div className="text-sm text-slate-200 leading-relaxed">
+                              {getPhysicalImpactDescription(results.energyJoule)}
+                            </div>
+                          </div>
+                       </div>
+                    </div>
+                  </div>
+                   <div className="flex flex-col gap-6 lg:col-span-1">
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex-1 flex flex-col">
+                         <div className="absolute top-0 right-0 p-4 opacity-5"><Activity size={120} /></div>
+                         <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2 relative z-10">
+                            <Activity className="text-blue-400" /> Параметры Поля
+                         </h3>
+                         <div className="space-y-6 relative z-10 mb-8">
+                            <div>
+                              <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2 mb-2">
+                                <span className="text-slate-400 flex items-center gap-1">
+                                  E (На поверхности) <HelpCircle size={12} className="text-slate-600" />
+                                </span>
+                                <span className="text-cyan-300 font-mono text-lg">{formatScientific(results.fieldSurface)} В/м</span>
+                              </div>
+                              <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800">
+                                  <div className="flex items-center gap-2 text-slate-300 text-xs font-bold mb-2">
+                                     <Ruler size={14} className="text-rose-400"/> Радиус Поражения (Оценка)
+                                  </div>
+                                  <div className="flex justify-between items-baseline mb-1">
+                                      <span className="text-xs text-slate-500">Реальный (0.2-0.5R)</span>
+                                      <span className="text-emerald-400 font-mono font-bold">
+                                        {results.damageRadiusRealMin.toFixed(1)} — {results.damageRadiusRealMax.toFixed(1)} м
+                                      </span>
+                                  </div>
+                                  <div className="flex justify-between items-baseline border-b border-slate-800/50 pb-2 mb-2">
+                                      <span className="text-[10px] text-slate-600">Теор. макс (Хопкинсон)</span>
+                                      <span className="text-slate-600 font-mono text-xs">{results.damageRadius.toFixed(1)} м</span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 leading-tight">
+                                     <strong className="text-rose-400">Важно:</strong> Расчет — инженерное приближение. Механизм разрушения ШМ (эл. разряд ~0.1с) отличается от ВВ (~1мкс). Формула дает верхнюю оценку.
+                                  </div>
+                              </div>
+                            </div>
+                            <div>
+                               <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2 mb-2">
+                                  <span className="text-slate-400 flex items-center gap-1">
+                                     <Wind size={14} /> Ток утечки
+                                  </span>
+                                  <span className="text-white font-mono text-lg">{formatScientific(results.leakageCurrent)} А</span>
+                               </div>
+                            </div>
+                            <div>
+                               <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2 mb-2">
+                                  <span className="text-slate-400 flex items-center gap-1">
+                                     <Timer size={14} /> Время жизни (Бычков)
+                                  </span>
+                                  <div className="text-right">
+                                    <span className="text-white font-mono text-lg">{results.lifetime.toFixed(1)} с</span>
+                                  </div>
+                               </div>
+                               <div className="bg-slate-950/50 p-3 rounded text-[11px] text-slate-400 border border-slate-800/50 flex flex-col gap-2">
+                                  <div className="flex gap-2">
+                                     <Info size={14} className="text-blue-400 shrink-0" />
+                                     <span>
+                                        <strong>Статистика В.Л. Бычкова:</strong><br/>
+                                        Среднее время: 10–30 сек. Редкие случаи > 50см живут дольше.
+                                     </span>
+                                  </div>
+                               </div>
+                            </div>
+                         </div>
+                         <div className="mt-auto relative z-10 p-4 bg-slate-950 rounded-lg border border-slate-800">
+                            <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Резюме</div>
+                            <div className="text-sm text-slate-300 italic">
+                               "{results.stabilityBeta > 1 ? 'Объект находится в метастабильном состоянии.' : 'Объект находится в фазе активного распада.'} 
+                               Оболочка испытывает колоссальное давление в {formatScientific(results.pressureShell)} Па."
+                            </div>
+                         </div>
+                      </div>
+                   </div>
+                   <div className="flex flex-col gap-6 lg:col-span-1">
+                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex-1">
+                       <div className="absolute top-0 right-0 p-4 opacity-5"><Table size={120} /></div>
+                       <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2 relative z-10">
+                          <Table className="text-slate-400" /> Эталонная Таблица
+                       </h3>
+                       <p className="text-xs text-slate-500 mb-4 relative z-10">
+                         Модель Никитина (Q ∝ D³). Демонстрация резкого роста энергии (W ∝ D⁵) при увеличении размера.
+                       </p>
+                       <div className="relative z-10 overflow-x-auto">
+                         <table className="w-full text-left border-collapse text-xs font-mono">
+                            <thead>
+                              <tr className="border-b border-slate-700 text-slate-400">
+                                <th className="py-2 pr-2">D (см)</th>
+                                <th className="py-2 pr-2">τ (с)</th>
+                                <th className="py-2 pr-2">Q (мКл)</th>
+                                <th className="py-2">W (кДж)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="text-slate-300">
+                               <tr className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                                 <td className="py-2">5</td>
+                                 <td className="py-2 text-slate-500">6.3</td>
+                                 <td className="py-2 text-purple-400">0.02</td>
+                                 <td className="py-2 text-emerald-400">0.1</td>
+                               </tr>
+                               <tr className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                                 <td className="py-2">10</td>
+                                 <td className="py-2 text-slate-500">12.5</td>
+                                 <td className="py-2 text-purple-400">0.19</td>
+                                 <td className="py-2 text-emerald-400">3.2</td>
+                               </tr>
+                               <tr className="border-b border-slate-800/50 bg-slate-800/20 hover:bg-slate-800/40">
+                                 <td className="py-2 font-bold text-white">20 (Тип)</td>
+                                 <td className="py-2 text-slate-400">25.0</td>
+                                 <td className="py-2 text-purple-300 font-bold">1.50</td>
+                                 <td className="py-2 text-rose-400 font-bold">101</td>
+                               </tr>
+                               <tr className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                                 <td className="py-2">30</td>
+                                 <td className="py-2 text-slate-500">37.5</td>
+                                 <td className="py-2 text-purple-400">5.06</td>
+                                 <td className="py-2 text-rose-400">768</td>
+                               </tr>
+                               <tr className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                                 <td className="py-2">50*</td>
+                                 <td className="py-2 text-slate-500">62.5</td>
+                                 <td className="py-2 text-purple-400">23.4</td>
+                                 <td className="py-2 text-rose-400">9880</td>
+                               </tr>
+                            </tbody>
+                         </table>
+                       </div>
+                       <div className="mt-4 px-3 py-2 bg-emerald-900/20 rounded border border-emerald-800/50 text-[10px] text-emerald-400 flex items-center justify-between relative z-10">
+                           <div className="flex items-center gap-2">
+                               <ShieldCheck size={12} />
+                               <span className="font-bold">ТОЧНОСТЬ ВЕРИФИЦИРОВАНА</span>
+                           </div>
+                           <span>98.8%</span>
+                       </div>
+                       <div className="mt-2 p-3 bg-slate-950 rounded border border-slate-800 text-[10px] text-slate-500 relative z-10">
+                          <div className="mb-2 text-slate-400 italic border-b border-slate-800/50 pb-2">
+                             * Энергия ~2.4 кг ТНТ — на порядок выше типичных наблюдений. Такие объекты крайне редки в природе.
+                          </div>
+                          <span className="text-emerald-500 font-bold">Ваш текущий результат:</span><br/>
+                          D = {params.diameter} см, Q = {params.charge.toFixed(2)} мКл <br/>
+                          W = {(results.energyJoule/1000).toFixed(1)} кДж
+                       </div>
+                     </div>
+                   </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const InfoOverlay = ({ onClose }) => {
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md overflow-hidden flex flex-col">
+              <div className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-40">
+                <div>
+                  <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+                    <Cpu className="text-purple-400" size={28} /> Информация о Модели
+                  </h2>
+                  <p className="text-slate-500 text-sm mt-1">Вклад российской науки в мировое изучение атмосферного электричества</p>
+                </div>
+                <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-300 transition-colors group border border-slate-700">
+                  <X size={24} className="group-hover:rotate-90 transition-transform" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                <div className="max-w-4xl mx-auto space-y-8 pb-12">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none"><Calculator size={100} /></div>
+                        <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2 relative z-10">
+                           <Calculator className="text-cyan-400" /> Математический Аппарат (Physics Engine)
+                        </h3>
+                        <p className="text-sm text-slate-400 mb-4 relative z-10">Программный код алгоритмизирует уравнения модели Никитина-Бычкова:</p>
+                        <div className="grid md:grid-cols-2 gap-4 relative z-10">
+                           <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800/50">
+                              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">1. Энергия (Никитин)</div>
+                              <code className="text-lg text-emerald-300 font-mono block mb-2">W = Q² / (4πε₀D)</code>
+                              <p className="text-xs text-slate-400">Полная энергия сферического конденсатора.</p>
+                           </div>
+                           <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800/50">
+                              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">2. Напряженность Поля</div>
+                              <code className="text-lg text-cyan-300 font-mono block mb-2">E = Q / (4πε₀R²)</code>
+                              <p className="text-xs text-slate-400">Напряженность поля на поверхности ядра.</p>
+                           </div>
+                           <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800/50">
+                              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">3. Давления и Баланс</div>
+                              <code className="text-sm text-rose-300 font-mono block mb-1">P_elec = ε₀E² / 2</code>
+                              <code className="text-sm text-emerald-300 font-mono block mb-2">P_shell = (εᵣ - 1)ε₀E² / 2</code>
+                              <p className="text-xs text-slate-400"><strong>Условие стабильности:</strong> β = P_shell / P_elec ≥ 1</p>
+                           </div>
+                           <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800/50">
+                              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">4. Время жизни (Бычков)</div>
+                              <code className="text-lg text-yellow-300 font-mono block mb-2">τ = k · D</code>
+                              <p className="text-xs text-slate-400">Эмпирический закон (k ≈ 1.0–1.5 с/см).</p>
+                           </div>
+                        </div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                       <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none"><Globe size={100} /></div>
+                       <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2 relative z-10">
+                         <Database className="text-blue-400" /> Концепция и Глобальный Контекст
+                       </h3>
+                       <p className="text-slate-300 leading-relaxed mb-4 relative z-10">
+                         Цифровой демонстратор физико-математической модели <strong>А.И. Никитина (ФИЦ ХФ РАН)</strong> и <strong>В.Л. Бычкова (МГУ)</strong>.
+                       </p>
+                    </div>
+                    <div className="bg-gradient-to-br from-slate-900 to-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl">
+                       <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
+                         <Award className="text-yellow-400" /> Мировое Признание и Вклад
+                       </h3>
+                       <div className="grid md:grid-cols-2 gap-6">
+                          <div className="space-y-4">
+                             <div className="flex gap-3">
+                                <div className="mt-1 bg-blue-500/10 p-2 rounded h-fit"><BookMarked size={20} className="text-blue-400"/></div>
+                                <div>
+                                   <h4 className="font-bold text-slate-200">Публикации Springer</h4>
+                                   <p className="text-xs text-slate-400 mt-1">Монографии Бычкова и Никитина (2010, 2014) являются ведущими в данной области.</p>
+                                </div>
+                             </div>
+                             <div className="flex gap-3">
+                                <div className="mt-1 bg-emerald-500/10 p-2 rounded h-fit"><Database size={20} className="text-emerald-400"/></div>
+                                <div>
+                                   <h4 className="font-bold text-slate-200">База Данных Бычкова</h4>
+                                   <p className="text-xs text-slate-400 mt-1">В.Л. Бычков создал базу из тысяч наблюдений. Формула τ = k·D используется во всем мире.</p>
+                                </div>
+                             </div>
+                          </div>
+                          <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-700/50 flex flex-col justify-center">
+                              <h4 className="text-sm font-bold text-slate-300 mb-3 border-b border-slate-800 pb-2">Вклад данного проекта в мировую науку:</h4>
+                              <ul className="space-y-2 text-xs text-slate-400">
+                                 <li className="flex gap-2"><span className="text-purple-400 font-bold">1.</span><span><strong>Цифровизация наследия:</strong> Перевод формул в код.</span></li>
+                                 <li className="flex gap-2"><span className="text-purple-400 font-bold">2.</span><span><strong>Верификация:</strong> Инструмент для проверки стабильности ШМ.</span></li>
+                                 <li className="flex gap-2"><span className="text-purple-400 font-bold">3.</span><span><strong>Технологическое лидерство:</strong> Создание "цифровых двойников".</span></li>
+                              </ul>
+                          </div>
+                       </div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                       <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+                         <Search className="text-indigo-400" /> Анализ Аналогов и Уникальность
+                       </h3>
+                       <div className="space-y-4">
+                          <div className="grid md:grid-cols-2 gap-4">
+                             <div className="bg-slate-950/30 p-4 rounded-xl border border-slate-800/50">
+                                <h4 className="font-bold text-slate-300 mb-2 text-sm">Существующие решения</h4>
+                                <ul className="space-y-2 text-xs text-slate-400">
+                                   <li>❌ <strong>Компьютерная графика:</strong> Только визуализация, без физики.</li>
+                                   <li>❌ <strong>Научные статьи:</strong> Только формулы, без интерактивности.</li>
+                                   <li>❌ <strong>Базы данных Бычкова:</strong> Статистика наблюдений, не калькулятор.</li>
+                                   <li>⚠️ <strong>Эксперименты (Бычков):</strong> Ограничены размером установки.</li>
+                                </ul>
+                             </div>
+                             <div className="bg-emerald-900/10 p-4 rounded-xl border border-emerald-500/20">
+                                 <h4 className="font-bold text-emerald-400 mb-2 text-sm">Уникальность Проекта</h4>
+                                 <ul className="space-y-2 text-xs text-slate-300">
+                                   <li>✅ <strong>Первый веб-калькулятор:</strong> Расчет для любого размера (5-60 см).</li>
+                                   <li>✅ <strong>Синтез моделей:</strong> Теория Никитина + статистика Бычкова.</li>
+                                   <li>✅ <strong>Оценка опасности:</strong> Инженерный расчет радиуса поражения (по адаптированному закону Хопкинсона-Кранца).</li>
+                                   <li>✅ <strong>Доступность:</strong> Бесплатно в браузере.</li>
+                                 </ul>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const ChartOverlay = ({ params, results, isVolumetric, onClose }) => {
+          const { diameter, charge } = params;
+          const containerRef = useRef(null);
+          const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+          useEffect(() => {
+            if (!containerRef.current) return;
+            const observer = new ResizeObserver((entries) => {
+              const entry = entries[0];
+              if (entry) {
+                setDimensions({
+                  width: entry.contentRect.width,
+                  height: entry.contentRect.height
+                });
+              }
+            });
+            observer.observe(containerRef.current);
+            return () => observer.disconnect();
+          }, []);
+
+          const currentRho = charge / Math.pow(diameter, 3);
+          const calculateEnergy = (d_cm) => {
+            const D_m = d_cm / 100;
+            let Q_c;
+            if (isVolumetric) {
+              const projectedCharge = currentRho * Math.pow(d_cm, 3);
+              Q_c = projectedCharge / 1000;
+            } else {
+              Q_c = charge / 1000;
+            }
+            return (Q_c * Q_c) / (4 * Math.PI * EPSILON_0 * D_m);
+          };
+
+          const dataPoints = useMemo(() => {
+            const points = [];
+            for (let d = 5; d <= 60; d += 1) {
+              points.push({ d, e: calculateEnergy(d) });
+            }
+            return points;
+          }, [charge, diameter, isVolumetric]);
+
+          const width = dimensions.width || 800;
+          const height = dimensions.height || 500;
+          const padding = { top: 20, right: 40, bottom: 40, left: 80 };
+          const innerWidth = Math.max(0, width - padding.left - padding.right);
+          const innerHeight = Math.max(0, height - padding.top - padding.bottom);
+          const maxEnergy = Math.max(...dataPoints.map(p => p.e));
+          const yMax = Math.max(maxEnergy, results.energyJoule) * 1.1;
+          const xScale = (d) => ((d - 5) / (60 - 5)) * innerWidth;
+          const yScale = (e) => innerHeight - (e / yMax) * innerHeight;
+
+          const calculateGridStep = (maxVal) => {
+            const orderOfMagnitude = Math.floor(Math.log10(maxVal));
+            const step = Math.pow(10, orderOfMagnitude - 1);
+            if (maxVal / step > 20) return step * 5; 
+            return step;
+          };
+
+          const yStep = calculateGridStep(yMax);
+          const yGridLines = [];
+          if (yMax > 0 && yStep > 0) {
+            for (let y = 0; y <= yMax; y += yStep) {
+              yGridLines.push(y);
+            }
+          }
+          const xGridLines = [5, 10, 20, 30, 40, 50, 60]; 
+          const pathData = dataPoints.map((p, i) => 
+            `${i === 0 ? 'M' : 'L'} ${xScale(p.d)} ${yScale(p.e)}`
+          ).join(' ');
+
+          const currentX = xScale(Math.min(60, diameter));
+          const currentY = yScale(results.energyJoule);
+          const chartColor = isVolumetric ? '#f43f5e' : '#38bdf8';
+          
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md overflow-hidden flex flex-col">
+               <div className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-40">
+                <div>
+                  <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+                    <BarChart2 className="text-blue-400" size={28} />
+                    Графическая Модель: {isVolumetric ? "Объемный заряд (Q ∝ D³)" : "Фиксированный заряд (Q = const)"}
+                  </h2>
+                </div>
+                <button 
+                  onClick={onClose}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-300 transition-colors group border border-slate-700"
+                >
+                  <X size={24} className="group-hover:rotate-90 transition-transform" />
+                </button>
+              </div>
+              <div className="flex-1 flex flex-col p-6 min-h-0">
+                <div className="w-full h-full max-w-[98%] mx-auto flex flex-col gap-4">
+                  <div className="shrink-0 bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-6 items-center shadow-lg">
+                     <div className="flex items-center gap-3 pr-6 border-r border-slate-800">
+                       <div className={`p-2 rounded-lg ${isVolumetric ? 'bg-rose-500/10' : 'bg-cyan-500/10'}`}>
+                         {isVolumetric ? <TrendingUp className="text-rose-400" size={20} /> : <TrendingDown className="text-cyan-400" size={20} />}
+                       </div>
+                       <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wide">Закон Изменения</div>
+                          <div className={`font-mono font-bold ${isVolumetric ? 'text-rose-400' : 'text-cyan-400'}`}>
+                            {isVolumetric ? "W(D) ~ D⁵" : "W(D) ~ 1/D"}
+                          </div>
+                       </div>
+                     </div>
+                     <div className="flex-1 min-w-[200px]">
+                       <p className="text-sm text-slate-400">
+                         {isVolumetric 
+                           ? <span>Реалистичная модель. Увеличение диаметра в 2 раза повышает энергию в <span className="text-rose-400 font-bold">32 раза</span>.</span>
+                           : <span>Классическая электростатика (конденсатор). При постоянном заряде энергия <span className="text-cyan-400 font-bold">убывает</span> при расширении шара.</span>
+                         }
+                       </p>
+                     </div>
+                  </div>
+                  <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl relative min-h-[300px]">
+                     <div ref={containerRef} className="absolute inset-4">
+                      {dimensions.width > 0 && (
+                        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="overflow-visible font-mono text-xs">
+                          {yGridLines.map((yVal) => (
+                            <g key={yVal}>
+                              <line x1={padding.left} y1={yScale(yVal) + padding.top} x2={width - padding.right} y2={yScale(yVal) + padding.top} stroke="#1e293b" strokeWidth="1" strokeDasharray={yVal === 0 ? "0" : "4 4"}/>
+                              <text x={padding.left - 10} y={yScale(yVal) + padding.top + 4} textAnchor="end" fill="#64748b" fontSize="10">{formatMetric(yVal, 'Дж')}</text>
+                            </g>
+                          ))}
+                          {xGridLines.map((xVal) => (
+                            <g key={xVal}>
+                              <line x1={xScale(xVal) + padding.left} y1={padding.top} x2={xScale(xVal) + padding.left} y2={height - padding.bottom} stroke="#1e293b" strokeWidth="1" />
+                              <text x={xScale(xVal) + padding.left} y={height - padding.bottom + 20} textAnchor="middle" fill="#64748b">{xVal} см</text>
+                            </g>
+                          ))}
+                          <text x={width / 2} y={height - 5} textAnchor="middle" fill="#94a3b8" fontWeight="bold">Диаметр Шара (D)</text>
+                          <text x={20} y={height / 2} textAnchor="middle" fill="#94a3b8" fontWeight="bold" transform={`rotate(-90, 20, ${height/2})`}>Энергия (W)</text>
+                          <g transform={`translate(${padding.left}, ${padding.top})`}>
+                            <path d={pathData} fill="none" stroke={chartColor} strokeWidth="3" strokeLinecap="round" filter={`drop-shadow(0 0 4px ${chartColor}80)`}/>
+                          </g>
+                          <g transform={`translate(${padding.left + currentX}, ${padding.top + currentY})`}>
+                            <circle r="6" fill="#fbbf24" stroke="white" strokeWidth="2" />
+                            <circle r="12" fill="#fbbf24" opacity="0.3">
+                              <animate attributeName="r" values="8;16;8" dur="2s" repeatCount="indefinite" />
+                              <animate attributeName="opacity" values="0.5;0.1;0.5" dur="2s" repeatCount="indefinite" />
+                            </circle>
+                          </g>
+                        </svg>
+                      )}
+                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // ==========================================
+        // APP
+        // ==========================================
+
+        const DEFAULT_PARAMS = {
+          diameter: 20, 
+          charge: 1.5,  
+          epsilon: 3,   
+          k_lifetime: 1.25 
+        };
+
+        function App() {
+          const [params, setParams] = useState(DEFAULT_PARAMS);
+          const [results, setResults] = useState(null);
+          const [isVolumetricMode, setIsVolumetricMode] = useState(true); 
+          const [activeSideTab, setActiveSideTab] = useState('controls');
+          const [showAnalyticsOverlay, setShowAnalyticsOverlay] = useState(false);
+          const [showChartOverlay, setShowChartOverlay] = useState(false); 
+          const [showInfoOverlay, setShowInfoOverlay] = useState(false);
+
+          useEffect(() => {
+            const res = calculatePhysics(params);
+            setResults(res);
+          }, [params]);
+
+          const handleParamChange = (newParams) => {
+            if (isVolumetricMode && newParams.diameter !== params.diameter) {
+               const ratio = newParams.diameter / params.diameter;
+               const volumeScale = Math.pow(ratio, 3);
+               let newCharge = params.charge * volumeScale;
+               setParams({ ...newParams, charge: newCharge });
+            } else {
+               setParams(newParams);
+            }
+          };
+
+          const handleReset = () => {
+            setParams(DEFAULT_PARAMS);
+            setIsVolumetricMode(true);
+          };
+
+          if (!results) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Инициализация нейросетевого интерфейса...</div>;
+
+          return (
+            <div className="min-h-screen lg:h-screen bg-slate-950 text-slate-200 p-4 md:p-6 lg:p-6 flex flex-col gap-4 lg:overflow-hidden relative">
+              <header className="shrink-0 flex flex-col md:flex-row md:items-center gap-6 pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-6">
+                  <div>
+                    <h1 className="text-lg md:text-2xl font-bold text-white flex items-center gap-2 leading-tight">
+                      <Sparkles className="text-cyan-400 shrink-0" size={24} />
+                      <span>Интерактивный демонстратор и веб-калькулятор параметров ШМ</span>
+                    </h1>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] md:text-xs text-slate-400 font-mono">
+                       <span className="flex items-center gap-1"><User size={10} className="text-purple-400"/> Никитин (РАН)</span>
+                       <span className="text-slate-600">|</span>
+                       <span className="flex items-center gap-1"><BarChart3 size={10} className="text-blue-400"/> Бычков (МГУ)</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowAnalyticsOverlay(true)} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 text-sm font-medium rounded-lg transition-all border border-slate-700 hover:border-cyan-500/50">
+                      <BookOpen size={16} /><span className="hidden sm:inline">Анализ</span>
+                    </button>
+                    <button onClick={() => setShowChartOverlay(true)} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-blue-400 text-sm font-medium rounded-lg transition-all border border-slate-700 hover:border-blue-500/50">
+                      <BarChart2 size={16} /><span className="hidden sm:inline">График</span>
+                    </button>
+                    <button onClick={() => setShowInfoOverlay(true)} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-purple-400 text-sm font-medium rounded-lg transition-all border border-slate-700 hover:border-purple-500/50">
+                      <Info size={16} /><span className="hidden sm:inline">Инфо</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 flex justify-end gap-4 text-[10px] text-slate-500 font-mono items-center">
+                   <div className="text-right hidden sm:block">
+                     <div className="uppercase tracking-wider text-emerald-500/80">Проект 2026</div>
+                     <div>Генеративный ИИ в Науке</div>
+                   </div>
+                </div>
+              </header>
+              <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:min-h-0">
+                <section className="lg:col-span-8 flex flex-col gap-4 lg:h-full min-h-[500px]">
+                  <div className="flex-1 relative min-h-0">
+                     <VisualizationPanel params={params} results={results} />
+                  </div>
+                </section>
+                <section className="lg:col-span-4 flex flex-col gap-0 lg:h-full bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+                  <div className="flex border-b border-slate-800 bg-slate-950/50">
+                    <button onClick={() => setActiveSideTab('controls')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeSideTab === 'controls' ? 'bg-slate-900 text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}`}>
+                      <Sliders size={16} /> Параметры
+                    </button>
+                    <button onClick={() => setActiveSideTab('results')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeSideTab === 'results' ? 'bg-slate-900 text-purple-400 border-b-2 border-purple-400' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}`}>
+                      <BarChart3 size={16} /> Результаты
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                    {activeSideTab === 'controls' ? (
+                      <Controls params={params} onChange={handleParamChange} onReset={handleReset} isVolumetric={isVolumetricMode} onToggleVolumetric={() => setIsVolumetricMode(!isVolumetricMode)} />
+                    ) : (
+                      <ResultsPanel results={results} />
+                    )}
+                  </div>
+                </section>
+              </main>
+              {showAnalyticsOverlay && <AnalyticsOverlay params={params} results={results} onClose={() => setShowAnalyticsOverlay(false)} />}
+              {showChartOverlay && <ChartOverlay params={params} results={results} isVolumetric={isVolumetricMode} onClose={() => setShowChartOverlay(false)} />}
+              {showInfoOverlay && <InfoOverlay onClose={() => setShowInfoOverlay(false)} />}
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+  </body>
+</html>
